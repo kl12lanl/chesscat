@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Шахматы со встроенным ИИ</title>
+    <!-- Надежная логика правил шахмат -->
+    <script src="https://cloudflare.com"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #222; color: #fff; margin: 0; padding: 20px; }
+        h2 { color: #f0d9b5; margin-bottom: 5px; }
+        .status { font-size: 16px; margin-bottom: 20px; color: #aaa; min-height: 24px; }
+        .board { display: grid; grid-template-columns: repeat(8, 12.5%); grid-template-rows: repeat(8, 12.5%); width: 100%; max-width: 440px; aspect-ratio: 1 / 1; margin: 0 auto; border: 6px solid #444; border-radius: 4px; box-shadow: 0 12px 36px rgba(0,0,0,0.5); }
+        .cell { display: flex; align-items: center; justify-content: center; font-size: calc(20px + 2vw); cursor: pointer; user-select: none; }
+        @media (min-width: 440px) { .cell { font-size: 42px; } }
+        .light { background-color: #f0d9b5; }
+        .dark { background-color: #b58863; }
+        .selected { background-color: #7ab874 !important; }
+        .black-piece { color: #000; filter: drop-shadow(0px 0px 1px #fff); }
+        .white-piece { color: #fff; filter: drop-shadow(0px 0px 2px #000); }
+    </style>
+</head>
+<body>
+
+    <h2>Шахматы против ИИ (Локальная версия)</h2>
+    <div class="status" id="game-status">Ваш ход (Белые). Нажмите на фигуру.</div>
+    <div id="board" class="board"></div>
+
+<script>
+const game = new Chess();
+let selectedSquare = null;
+
+const piecesSymbols = { 'wp':'♙','wn':'♘','wb':'♗','wr':'♖','wq':'♕','wk':'♔','bp':'♟','bn':'♞','bb':'♝','br':'♜','bq':'♛','bk':'♚' };
+
+// Ценность фигур для ИИ + позиционная оценка (ИИ стремится в центр)
+const pieceValues = { p: 10, n: 30, b: 30, r: 50, q: 90, k: 9000 };
+const positionalWeights = [,
+ ,
+ ,
+    [0.5,0.5,1, 2.5,2.5,1, 0.5,0.5],
+,
+    [0.5,-0.5,-1,0,  0,-1,-0.5,0.5],
+    [0.5, 1, 1, -2, -2, 1,  1, 0.5],
+    [0,  0,  0,  0,  0,  0,  0,  0]
+];
+
+function evaluateBoard(matrix) {
+    let score = 0;
+    for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+            let p = matrix[r][c];
+            if (p) {
+                let val = pieceValues[p.type];
+                let posValue = p.type === 'p' ? positionalWeights[p.color === 'w' ? 7-r : r][c] : 0;
+                score += (p.color === 'w' ? (val + posValue) : -(val + posValue));
+            }
+        }
+    }
+    return score;
+}
+
+// Быстрый алгоритм просчета ходов на 2 шага вперед
+function minimax(depth, alpha, beta, isMax) {
+    if (depth === 0 || game.game_over()) {
+        return -evaluateBoard(game.board());
+    }
+    let moves = game.moves();
+    if (isMax) {
+        let maxEval = -Infinity;
+        for (let move of moves) {
+            game.move(move);
+            let ev = minimax(depth - 1, alpha, beta, false);
+            game.undo();
+            maxEval = Math.max(maxEval, ev);
+            alpha = Math.max(alpha, ev);
+            if (beta <= alpha) break;
+        }
+        return maxEval;
+    } else {
+        let minEval = Infinity;
+        for (let move of moves) {
+            game.move(move);
+            let ev = minimax(depth - 1, alpha, beta, true);
+            game.undo();
+            minEval = Math.min(minEval, ev);
+            beta = Math.min(beta, ev);
+            if (beta <= alpha) break;
+        }
+        return minEval;
+    }
+}
+
+function makeAIMove() {
+    let moves = game.moves();
+    if (moves.length === 0) return;
+    
+    let bestMove = moves[0];
+    let bestValue = -Infinity;
+
+    for (let move of moves) {
+        game.move(move);
+        let val = minimax(1, -Infinity, Infinity, false);
+        game.undo();
+        if (val > bestValue) {
+            bestValue = val;
+            bestMove = move;
+        }
+    }
+
+    game.move(bestMove);
+    render();
+    
+    if (game.game_over()) {
+        checkGameOver();
+    } else {
+        document.getElementById('game-status').innerText = "Ваш ход (Белые).";
+    }
+}
+
+function render() {
+    const boardDiv = document.getElementById('board');
+    boardDiv.innerHTML = '';
+    const matrix = game.board();
+
+    for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+            let cell = document.createElement('div');
+            let files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+            let sq = files[c] + (8 - r);
+            
+            cell.className = 'cell ' + ((r + c) % 2 === 0 ? 'light' : 'dark');
+            if (selectedSquare === sq) cell.className += ' selected';
+            
+            let p = matrix[r][c];
+            if (p) {
+                cell.innerText = piecesSymbols[p.color + p.type];
+                cell.className += (p.color === 'w' ? ' white-piece' : ' black-piece');
+            }
+            cell.onclick = () => handleClick(sq);
+            boardDiv.appendChild(cell);
+        }
+    }
+}
+
+function handleClick(sq) {
+    if (game.turn() === 'b' || game.game_over()) return;
+    let p = game.get(sq);
+    
+    if (selectedSquare === null) {
+        if (p && p.color === 'w') {
+            selectedSquare = sq;
+            render();
+        }
+    } else {
+        let move = game.move({ from: selectedSquare, to: sq, promotion: 'q' });
+        
+        if (move === null) {
+            selectedSquare = (p && p.color === 'w') ? sq : null;
+            render();
+        } else {
+            selectedSquare = null;
+            render();
+            
+            if (!game.game_over()) {
+                document.getElementById('game-status').innerText = "Компьютер думает...";
+                setTimeout(makeAIMove, 250);
+            } else {
+                checkGameOver();
+            }
+        }
+    }
+}
+
+function checkGameOver() {
+    const statusDiv = document.getElementById('game-status');
+    if (game.in_checkmate()) statusDiv.innerText = "Мат! Игра окончена.";
+    else if (game.in_draw()) statusDiv.innerText = "Ничья!";
+}
+
+render();
+</script>
+</body>
+</html>
